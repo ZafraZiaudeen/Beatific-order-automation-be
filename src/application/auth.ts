@@ -272,6 +272,26 @@ export const acceptInvitation = async (input: AcceptInviteInput) => {
   };
 };
 
+export const updateProfile = async (userId: string, name: string) => {
+  const user = await User.findById(userId);
+  if (!user) throw new NotFoundError("User not found");
+  if (!name?.trim()) throw new ValidationError("Name is required");
+  user.name = name.trim();
+  await user.save();
+  return { _id: user._id, email: user.email, name: user.name, role: user.role };
+};
+
+export const changePassword = async (userId: string, currentPassword: string, newPassword: string) => {
+  const user = await User.findById(userId);
+  if (!user) throw new NotFoundError("User not found");
+  const isMatch = await comparePassword(currentPassword, user.passwordHash);
+  if (!isMatch) throw new UnauthorizedError("Current password is incorrect");
+  if (!newPassword || newPassword.length < 8) throw new ValidationError("New password must be at least 8 characters");
+  user.passwordHash = await hashPassword(newPassword);
+  await user.save();
+  return { message: "Password updated successfully" };
+};
+
 export const getMe = async (userId: string) => {
   const user = await User.findById(userId).lean();
   if (!user) throw new NotFoundError("User not found");
