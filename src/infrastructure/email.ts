@@ -1,31 +1,20 @@
-import nodemailer from "nodemailer";
+import { Resend } from "resend";
 
-const getTransporter = () => {
-  const host = process.env.SMTP_HOST;
-  const port = Number(process.env.SMTP_PORT) || 587;
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-
-  if (!host || !user || !pass) {
-    console.warn("SMTP not configured — emails will be logged to console");
-    return null;
-  }
-
-  return nodemailer.createTransport({
-    host,
-    port,
-    secure: port === 465,
-    auth: { user, pass },
-  });
+const getResend = () => {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) return null;
+  return new Resend(apiKey);
 };
+
+const getFromEmail = () =>
+  process.env.RESEND_FROM_EMAIL || "Beatific.co <noreply@beatific.co>";
 
 export const generateVerificationCode = (): string => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
 export const sendVerificationEmail = async (email: string, code: string, name: string) => {
-  const transporter = getTransporter();
-  const from = process.env.SMTP_FROM || "Beatific.co <noreply@beatific.co>";
+  const resend = getResend();
 
   const html = `
     <div style="font-family: 'Inter', sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 24px;">
@@ -42,13 +31,13 @@ export const sendVerificationEmail = async (email: string, code: string, name: s
     </div>
   `;
 
-  if (!transporter) {
+  if (!resend) {
     console.log(`\n📧 VERIFICATION EMAIL → ${email}\n   Code: ${code}\n`);
     return;
   }
 
-  await transporter.sendMail({
-    from,
+  await resend.emails.send({
+    from: getFromEmail(),
     to: email,
     subject: `${code} — Verify your Beatific.co email`,
     html,
@@ -61,8 +50,7 @@ export const sendInvitationEmail = async (
   inviterName: string,
   inviteLink: string
 ) => {
-  const transporter = getTransporter();
-  const from = process.env.SMTP_FROM || "Beatific.co <noreply@beatific.co>";
+  const resend = getResend();
 
   const html = `
     <div style="font-family: 'Inter', sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 24px;">
@@ -79,13 +67,13 @@ export const sendInvitationEmail = async (
     </div>
   `;
 
-  if (!transporter) {
+  if (!resend) {
     console.log(`\n📧 INVITATION EMAIL → ${email}\n   Company: ${companyName}\n   Link: ${inviteLink}\n`);
     return;
   }
 
-  await transporter.sendMail({
-    from,
+  await resend.emails.send({
+    from: getFromEmail(),
     to: email,
     subject: `Join ${companyName} on Beatific.co`,
     html,

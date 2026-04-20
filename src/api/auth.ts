@@ -87,4 +87,26 @@ router.get("/me", isAuthenticated, async (req: Request, res: Response, next: Nex
   }
 });
 
+// PATCH /api/auth/profile — update name
+router.patch("/profile", isAuthenticated, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const result = await authService.updateProfile(req.auth!.userId as string, req.body.name);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// PATCH /api/auth/password — change password
+router.patch("/password", isAuthenticated, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    const result = await authService.changePassword(req.auth!.userId as string, currentPassword, newPassword);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
 export default router;
+
