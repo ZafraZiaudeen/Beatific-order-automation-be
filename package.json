@@ -4,7 +4,9 @@
   "scripts": {
     "dev": "nodemon src/index.ts",
     "build": "npm install && tsc",
-    "start": "node ./dist/index.js"
+    "start": "node ./dist/index.js",
+    "check-lulu-credentials": "ts-node src/scripts/check-lulu-credentials.ts",
+    "check-lulu-credentials:clear": "ts-node src/scripts/check-lulu-credentials.ts --clear"
   },
   "license": "ISC",
   "dependencies": {

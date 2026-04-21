@@ -1,10 +1,16 @@
 import Order from "../infrastructure/schemas/Order";
+import Store from "../infrastructure/schemas/Store";
 import OrderEvent from "../infrastructure/schemas/OrderEvent";
-import { createPrintJob, getPrintJobStatus } from "../infrastructure/lulu";
+import { createPrintJob, getPrintJobStatus, LuluCredentials } from "../infrastructure/lulu";
 import { notifySlack } from "../infrastructure/slack";
 import { createNotification } from "./notification";
 import ValidationError from "../domain/errors/validation-error";
 import NotFoundError from "../domain/errors/not-found-error";
+import {
+  decryptLuluCredential,
+  encryptLuluCredential,
+  isEncryptedLuluCredential,
+} from "../infrastructure/lulu-credentials";
 
 const LULU_STATUS_MAP: Record<string, string> = {
   CREATED: "submitted",
@@ -18,10 +24,48 @@ const LULU_STATUS_MAP: Record<string, string> = {
   REJECTED: "failed",
 };
 
+const getStoreCredentials = async (
+  storeId: string
+): Promise<{ credentials?: LuluCredentials; shippingLevel: string; contactEmail: string | null }> => {
+  const store = await Store.findById(storeId);
+  if (!store) return { shippingLevel: "MAIL", contactEmail: null };
+
+  const shippingLevel = store.shippingLevel || "MAIL";
+
+  if (store.luluApiKey && store.luluApiSecret) {
+    const shouldEncryptKey = !isEncryptedLuluCredential(store.luluApiKey);
+    const shouldEncryptSecret = !isEncryptedLuluCredential(store.luluApiSecret);
+
+    if (shouldEncryptKey) store.luluApiKey = encryptLuluCredential(store.luluApiKey);
+    if (shouldEncryptSecret) store.luluApiSecret = encryptLuluCredential(store.luluApiSecret);
+    if (shouldEncryptKey || shouldEncryptSecret) await store.save();
+
+    const decryptedApiKey = decryptLuluCredential(store.luluApiKey);
+    const decryptedApiSecret = decryptLuluCredential(store.luluApiSecret);
+
+    if (!decryptedApiKey || !decryptedApiSecret) {
+      throw new ValidationError("Lulu API key and secret are required for this store");
+    }
+
+    const baseUrl =
+      store.luluApiBaseUrl ||
+      (store.luluSandboxMode ? "https://api.sandbox.lulu.com" : "https://api.lulu.com");
+
+    return {
+      credentials: { apiKey: decryptedApiKey, apiSecret: decryptedApiSecret, baseUrl },
+      shippingLevel,
+      contactEmail: store.contactEmail || null,
+    };
+  }
+
+  return { shippingLevel, contactEmail: store.contactEmail || null };
+};
+
 export const submitOrderToLulu = async (
   companyId: string,
   orderId: string,
-  userId: string
+  userId: string,
+  shippingLevelOverride?: string
 ) => {
   const order = await Order.findOne({ _id: orderId, companyId });
   if (!order) throw new NotFoundError("Order not found");
@@ -29,23 +73,25 @@ export const submitOrderToLulu = async (
   if (order.etsyStatus !== "ready_to_order") {
     throw new ValidationError("Order must be in 'Ready to Order' status before submitting to Lulu");
   }
-  if (!order.coverImageUrl) {
-    throw new ValidationError("Cover image is required before submitting to Lulu");
-  }
-  if (!order.interiorPdfUrl) {
-    throw new ValidationError("Interior PDF is required before submitting to Lulu");
-  }
-  if (!order.podPackageId) {
-    throw new ValidationError("Pod Package ID is required before submitting to Lulu");
+  if (!order.coverImageUrl) throw new ValidationError("Cover image is required before submitting to Lulu");
+  if (!order.interiorPdfUrl) throw new ValidationError("Interior PDF is required before submitting to Lulu");
+  if (!order.podPackageId) throw new ValidationError("Pod Package ID is required before submitting to Lulu");
+
+  const { credentials, shippingLevel: storeLevel, contactEmail: storeContactEmail } = await getStoreCredentials(String(order.storeId));
+  const resolvedShippingLevel = shippingLevelOverride || order.shippingLevel || storeLevel;
+
+  // Persist the shipping level on the order
+  if (resolvedShippingLevel !== order.shippingLevel) {
+    order.shippingLevel = resolvedShippingLevel;
   }
 
   const luluResponse = await createPrintJob({
     externalId: order.etsyOrderId,
-    title: order.productTitle,
     podPackageId: order.podPackageId,
-    coverUrl: order.coverImageUrl,       // canonical URL, no transforms
-    interiorUrl: order.interiorPdfUrl,   // canonical URL, no transforms
+    coverUrl: order.coverImageUrl,
+    interiorUrl: order.interiorPdfUrl,
     quantity: order.quantity,
+    shippingLevel: resolvedShippingLevel,
     shippingAddress: {
       name: order.shippingAddress.name,
       street1: order.shippingAddress.street1,
@@ -55,11 +101,11 @@ export const submitOrderToLulu = async (
       zip: order.shippingAddress.zip,
       country: order.shippingAddress.country,
     },
-    contactEmail: order.customerEmail || "orders@beatific.co",
+    contactEmail: storeContactEmail || order.customerEmail || "orders@beatific.co",
+    credentials,
   });
 
   if (!luluResponse) {
-    // Lulu not configured — update status as simulated
     order.etsyStatus = "in_progress";
     order.luluStatus = "submitted";
     order.luluJobId = `sim_${Date.now()}`;
@@ -91,7 +137,7 @@ export const submitOrderToLulu = async (
     toStatus: "in_progress",
     statusType: "etsy",
     userId,
-    note: `Submitted to Lulu (Job: ${luluResponse.id})`,
+    note: `Submitted to Lulu (Job: ${luluResponse.id}, Shipping: ${resolvedShippingLevel})`,
   }).save();
 
   await notifySlack("📤 Order Submitted to Lulu", [
@@ -99,6 +145,7 @@ export const submitOrderToLulu = async (
     `Customer: ${order.customerName}`,
     `Product: ${order.productTitle}`,
     `Lulu Job ID: ${luluResponse.id}`,
+    `Shipping: ${resolvedShippingLevel}`,
   ]);
 
   await createNotification({
@@ -141,7 +188,6 @@ export const retryLuluSubmission = async (
   const order = await Order.findOne({ _id: orderId, companyId });
   if (!order) throw new NotFoundError("Order not found");
 
-  // Reset to ready_to_order so submitOrderToLulu can run
   order.etsyStatus = "ready_to_order";
   order.luluStatus = null;
   order.luluJobId = null;
@@ -150,11 +196,21 @@ export const retryLuluSubmission = async (
   return submitOrderToLulu(companyId, orderId, userId);
 };
 
-export const refreshLuluStatus = async (companyId: string, orderId: string) => {
-  const order = await Order.findOne({ _id: orderId, companyId });
-  if (!order || !order.luluJobId) throw new NotFoundError("Order or Lulu Job ID not found");
+export const refreshLuluStatus = async (companyId: string, orderIdOrLuluJobId: string) => {
+  let order = await Order.findOne({ _id: orderIdOrLuluJobId, companyId });
 
-  const status = await getPrintJobStatus(order.luluJobId);
+  // Allow callers to refresh by Lulu job ID as well.
+  if (!order) {
+    order = await Order.findOne({ luluJobId: orderIdOrLuluJobId, companyId });
+  }
+
+  if (!order) throw new NotFoundError("Order not found");
+  if (!order.luluJobId) {
+    throw new ValidationError("This order has not been submitted to Lulu yet");
+  }
+
+  const { credentials } = await getStoreCredentials(String(order.storeId));
+  const status = await getPrintJobStatus(order.luluJobId, credentials);
   if (!status) return order;
 
   const luluStatusName = status.status?.name || "";
@@ -166,9 +222,7 @@ export const refreshLuluStatus = async (companyId: string, orderId: string) => {
     if (internalStatus === "shipped") {
       order.etsyStatus = "completed";
       const trackingNumbers = status.line_items?.[0]?.tracking_numbers;
-      if (trackingNumbers?.length) {
-        order.trackingNumber = trackingNumbers[0];
-      }
+      if (trackingNumbers?.length) order.trackingNumber = trackingNumbers[0];
 
       await notifySlack("🚚 Order Shipped!", [
         `Order: #${order.etsyOrderId}`,
@@ -219,7 +273,6 @@ export const pollLuluStatuses = async () => {
   }).lean();
 
   let updated = 0;
-
   for (const order of orders) {
     try {
       await refreshLuluStatus(String(order.companyId), String(order._id));

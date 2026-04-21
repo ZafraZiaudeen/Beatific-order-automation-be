@@ -12,10 +12,12 @@ const bulkSubmitSchema = z.object({
 // POST /api/lulu/submit/:orderId
 router.post("/submit/:orderId", isAuthenticated, async (req: Request<{ orderId: string }>, res: Response, next: NextFunction) => {
   try {
+    const shippingLevel: string | undefined = req.body?.shippingLevel;
     const order = await luluService.submitOrderToLulu(
       req.auth!.companyId as string,
       req.params.orderId,
-      req.auth!.userId as string
+      req.auth!.userId as string,
+      shippingLevel
     );
     res.json(order);
   } catch (error) {

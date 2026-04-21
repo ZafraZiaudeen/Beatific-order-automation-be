@@ -19,6 +19,8 @@ export const updateOrderSchema = z.object({
   podPackageId: z.string().optional().nullable(),
   notes: z.string().optional(),
   personalization: z.record(z.string()).optional(),
+  shippingLevel: z.string().optional(),
+  matchedVariantName: z.string().optional().nullable(),
 });
 
 export const bulkStatusUpdateSchema = z.object({

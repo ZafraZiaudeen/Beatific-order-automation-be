@@ -21,7 +21,6 @@ import UnauthorizedError from "../domain/errors/unauthorized-error";
 import ValidationError from "../domain/errors/validation-error";
 
 export const register = async (input: RegisterInput) => {
-  // Check if company name already exists (case-insensitive)
   const existingCompany = await Company.findOne({
     name: { $regex: new RegExp(`^${input.companyName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") },
   });
@@ -30,27 +29,22 @@ export const register = async (input: RegisterInput) => {
     throw new ConflictError("A company with this name already exists");
   }
 
-  // Check if email already exists across any company
   const existingUser = await User.findOne({ email: input.email });
   if (existingUser) {
     throw new ConflictError("An account with this email already exists");
   }
 
-  // Hash password
   const passwordHash = await hashPassword(input.password);
 
-  // Create company (owner will be set after user creation)
   const company = new Company({
     name: input.companyName,
-    ownerId: "000000000000000000000000", // placeholder
+    ownerId: "000000000000000000000000", 
   });
   await company.save();
 
-  // Generate verification code
   const verificationCode = generateVerificationCode();
   const codeExpiry = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
 
-  // Create user as owner
   const user = new User({
     email: input.email,
     name: input.name,
@@ -74,10 +68,8 @@ export const register = async (input: RegisterInput) => {
   });
   await defaultStore.save();
 
-  // Send verification email
   await sendVerificationEmail(input.email, verificationCode, input.name);
 
-  // Sign token (limited — email not verified yet)
   const token = signAccessToken({
     userId: user._id.toString(),
     companyId: company._id.toString(),

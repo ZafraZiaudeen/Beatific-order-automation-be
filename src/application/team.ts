@@ -9,6 +9,18 @@ import ForbiddenError from "../domain/errors/forbidden-error";
 import NotFoundError from "../domain/errors/not-found-error";
 import ValidationError from "../domain/errors/validation-error";
 
+const DEFAULT_INVITATION_EXPIRES_HOURS = 48;
+
+const getInvitationExpiryHours = () => {
+  const parsed = Number(process.env.INVITATION_EXPIRES_HOURS);
+
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return Math.floor(parsed);
+  }
+
+  return DEFAULT_INVITATION_EXPIRES_HOURS;
+};
+
 export const getTeamMembers = async (companyId: string) => {
   const members = await User.find({ companyId })
     .select("_id email name role emailVerified createdAt")
@@ -32,7 +44,6 @@ export const inviteMember = async (
   invitedById: string,
   input: InviteInput
 ) => {
-  // Check if user already exists in the company
   const existingUser = await User.findOne({
     email: input.email,
     companyId,
@@ -42,7 +53,6 @@ export const inviteMember = async (
     throw new ConflictError("This user is already a member of your company");
   }
 
-  // Check if there's already a pending invitation
   const existingInvite = await Invitation.findOne({
     email: input.email,
     companyId,
@@ -55,7 +65,8 @@ export const inviteMember = async (
   }
 
   const token = crypto.randomBytes(32).toString("hex");
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+  const expiresInHours = getInvitationExpiryHours();
+  const expiresAt = new Date(Date.now() + expiresInHours * 60 * 60 * 1000);
 
   const invitation = new Invitation({
     email: input.email,
@@ -67,20 +78,45 @@ export const inviteMember = async (
   });
   await invitation.save();
 
-  // Send invitation email
   const company = await Company.findById(companyId);
   const inviter = await User.findById(invitedById);
   const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
   const inviteLink = `${frontendUrl}/invite/${token}`;
 
-  await sendInvitationEmail(
-    input.email,
-    company?.name || "Your Company",
-    inviter?.name || "A team member",
-    inviteLink
-  );
+  const delivery = await sendInvitationEmail({
+    email: input.email,
+    companyName: company?.name || "Your Company",
+    inviterName: inviter?.name || "A team member",
+    inviteLink,
+    role: input.role,
+    expiresAt,
+    expiresInHours,
+  });
 
-  return invitation;
+  const invitationSummary = {
+    _id: invitation._id,
+    email: invitation.email,
+    role: invitation.role,
+    expiresAt: invitation.expiresAt,
+    createdAt: invitation.createdAt,
+  };
+
+  if (delivery.delivered) {
+    return {
+      invitation: invitationSummary,
+      emailSent: true,
+      message: "Invitation sent successfully",
+    };
+  }
+
+  return {
+    invitation: invitationSummary,
+    emailSent: false,
+    inviteLink,
+    deliveryError: delivery.error,
+    message:
+      "Invitation created, but the email could not be delivered. Copy the invite link and share it manually.",
+  };
 };
 
 export const updateMemberRole = async (
@@ -92,12 +128,10 @@ export const updateMemberRole = async (
   const targetUser = await User.findOne({ _id: targetUserId, companyId });
   if (!targetUser) throw new NotFoundError("User not found");
 
-  // Cannot change owner's role
   if (targetUser.role === "owner") {
     throw new ForbiddenError("Cannot change the owner's role");
   }
 
-  // Cannot change your own role
   if (targetUserId === requesterId) {
     throw new ForbiddenError("Cannot change your own role");
   }
@@ -159,6 +193,7 @@ export const getInvitationByToken = async (token: string) => {
   return {
     email: invitation.email,
     role: invitation.role,
+    expiresAt: invitation.expiresAt,
     company: {
       _id: company?._id,
       name: company?.name,
