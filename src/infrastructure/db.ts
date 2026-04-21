@@ -40,7 +40,11 @@ const ensureOrderIndexes = async () => {
   }
 };
 
+let isConnected = false;
+
 const connectDB = async () => {
+  if (isConnected) return;
+
   try {
     const MONGODB_URL = process.env.MONGODB_URL;
 
@@ -50,6 +54,7 @@ const connectDB = async () => {
 
     await mongoose.connect(MONGODB_URL);
     await ensureOrderIndexes();
+    isConnected = true;
     console.log("Connected to MongoDB");
   } catch (error) {
     console.log("Error connecting to MongoDB", error);

@@ -17,11 +17,18 @@ import { pollLuluStatuses } from "./application/lulu";
 
 const app = express();
 
-// Middleware
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 
-// Routes
+app.use(async (_req, _res, next) => {
+  await connectDB();
+  next();
+});
+
+app.get("/", (_req, res) => {
+  res.json({ message: "Beatific Order Automation API", status: "running" });
+});
+
 app.use("/api/auth", authRouter);
 app.use("/api/team", teamRouter);
 app.use("/api/company", companyRouter);
@@ -32,30 +39,29 @@ app.use("/api/lulu", luluRouter);
 app.use("/api/upload", uploadRouter);
 app.use("/api/notifications", notificationRouter);
 
-// Health check
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-// Global error handler (must be last)
 app.use(globalErrorHandlingMiddleware);
 
-// Connect to DB and start server
-connectDB();
-const PORT = process.env.PORT || 8000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+if (!process.env.VERCEL) {
+  const PORT = process.env.PORT || 8000;
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
 
-  // Start cron jobs
-  cron.schedule("0 */6 * * *", async () => {
-    console.log("[Cron] Polling Lulu statuses...");
-    try {
-      const result = await pollLuluStatuses();
-      console.log(`[Cron] Updated ${result.updated} orders`);
-    } catch (err) {
-      console.error("[Cron] Lulu polling failed:", err);
-    }
+    cron.schedule("0 */6 * * *", async () => {
+      console.log("[Cron] Polling Lulu statuses...");
+      try {
+        const result = await pollLuluStatuses();
+        console.log(`[Cron] Updated ${result.updated} orders`);
+      } catch (err) {
+        console.error("[Cron] Lulu polling failed:", err);
+      }
+    });
+
+    console.log("[Cron] Lulu status polling scheduled (every 6 hours)");
   });
+}
 
-  console.log("[Cron] Lulu status polling scheduled (every 6 hours)");
-});
+export default app;
