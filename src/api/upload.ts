@@ -14,7 +14,6 @@ router.post("/presign", isAuthenticated, async (req: Request, res: Response, nex
     }
 
     if (!isCloudinaryConfigured()) {
-      // Return a placeholder for dev environments without Cloudinary
       res.json({
         configured: false,
         message: "Cloudinary not configured. Add CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET to .env",

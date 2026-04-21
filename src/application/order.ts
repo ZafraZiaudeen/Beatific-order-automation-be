@@ -4,6 +4,29 @@ import { UpdateOrderStatusInput, UpdateOrderInput, BulkStatusUpdateInput, BulkDe
 import NotFoundError from "../domain/errors/not-found-error";
 import ValidationError from "../domain/errors/validation-error";
 
+const getReadyToOrderMissingFields = (order: {
+  coverImageUrl?: string | null;
+  interiorPdfUrl?: string | null;
+  podPackageId?: string | null;
+}) => {
+  const missing: string[] = [];
+  if (!order.coverImageUrl) missing.push("cover image");
+  if (!order.interiorPdfUrl) missing.push("inside page PDF");
+  if (!order.podPackageId) missing.push("Pod Package ID");
+  return missing;
+};
+
+const assertReadyToOrderRequirements = (order: {
+  coverImageUrl?: string | null;
+  interiorPdfUrl?: string | null;
+  podPackageId?: string | null;
+}) => {
+  const missing = getReadyToOrderMissingFields(order);
+  if (missing.length > 0) {
+    throw new ValidationError(`Cannot move to \"Ready to Order\". Missing: ${missing.join(", ")}.`);
+  }
+};
+
 export const getOrders = async (
   companyId: string,
   filters: {
@@ -118,6 +141,10 @@ export const updateOrderStatus = async (
   const order = await Order.findOne({ _id: orderId, companyId });
   if (!order) throw new NotFoundError("Order not found");
 
+  if (input.status === "ready_to_order") {
+    assertReadyToOrderRequirements(order);
+  }
+
   const fromStatus = order.etsyStatus;
   order.etsyStatus = input.status;
   await order.save();
@@ -149,6 +176,8 @@ export const updateOrder = async (
   if (input.podPackageId !== undefined) order.podPackageId = input.podPackageId || null;
   if (input.notes !== undefined) order.notes = input.notes;
   if (input.personalization !== undefined) order.personalization = input.personalization;
+  if (input.shippingLevel !== undefined) order.shippingLevel = input.shippingLevel;
+  if (input.matchedVariantName !== undefined) order.matchedVariantName = input.matchedVariantName || null;
 
   // Check if has custom artwork
   if (order.coverImageUrl) order.hasCustomArtwork = true;
@@ -164,6 +193,22 @@ export const bulkUpdateStatus = async (
 ) => {
   const orders = await Order.find({ _id: { $in: input.orderIds }, companyId });
   if (orders.length === 0) throw new NotFoundError("No orders found");
+
+  if (input.status === "ready_to_order") {
+    const invalidOrders = orders
+      .map((order) => {
+        const missing = getReadyToOrderMissingFields(order);
+        if (missing.length === 0) return null;
+        return `#${order.etsyOrderId}: ${missing.join(", ")}`;
+      })
+      .filter((item): item is string => Boolean(item));
+
+    if (invalidOrders.length > 0) {
+      throw new ValidationError(
+        `Cannot move selected orders to \"Ready to Order\". Missing fields -> ${invalidOrders.join("; ")}`
+      );
+    }
+  }
 
   const events: Array<{
     orderId: unknown;

@@ -1,4 +1,5 @@
 import { NextFunction, Request, Response } from "express";
+import axios from "axios";
 import { ZodError } from "zod";
 
 const globalErrorHandlingMiddleware = (
@@ -7,7 +8,16 @@ const globalErrorHandlingMiddleware = (
   res: Response,
   next: NextFunction
 ) => {
-  console.log(error);
+  if (axios.isAxiosError(error)) {
+    console.error("AxiosError", {
+      message: error.message,
+      method: error.config?.method?.toUpperCase(),
+      url: error.config?.url,
+      status: error.response?.status,
+    });
+  } else {
+    console.error(error);
+  }
 
   if (error instanceof ZodError) {
     const messages = error.errors.map((e) => e.message).join(", ");

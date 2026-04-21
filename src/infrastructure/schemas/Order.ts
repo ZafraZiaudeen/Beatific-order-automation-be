@@ -18,7 +18,9 @@ export type LuluOrderStatus =
 
 export interface IOrder extends Document {
   etsyOrderId: string;
+  etsyItemId?: string;  // unique per line-item in channel exports (e.g. 4026826744a)
   etsyReceiptId: string | null;
+  sku: string | null;
   companyId: mongoose.Types.ObjectId;
   storeId: mongoose.Types.ObjectId;
   productId: mongoose.Types.ObjectId | null;
@@ -55,11 +57,15 @@ export interface IOrder extends Document {
   // Lulu
   luluJobId: string | null;
   podPackageId: string | null;
+  shippingLevel: string;
   trackingNumber: string | null;
 
   // Dates
   shipByDate: Date | null;
   orderedAt: Date | null;
+
+  // Variant
+  matchedVariantName: string | null;
 
   // Flags
   aiFlags: string[];
@@ -74,7 +80,17 @@ export interface IOrder extends Document {
 const orderSchema = new Schema<IOrder>(
   {
     etsyOrderId: { type: String, required: true },
+    etsyItemId: {
+      type: String,
+      default: undefined,
+      set: (value: unknown) => {
+        if (typeof value !== "string") return undefined;
+        const trimmed = value.trim();
+        return trimmed ? trimmed : undefined;
+      },
+    },
     etsyReceiptId: { type: String, default: null },
+    sku: { type: String, default: null },
     companyId: { type: Schema.Types.ObjectId, ref: "Company", required: true },
     storeId: { type: Schema.Types.ObjectId, ref: "Store", required: true },
     productId: { type: Schema.Types.ObjectId, ref: "Product", default: null },
@@ -114,10 +130,13 @@ const orderSchema = new Schema<IOrder>(
 
     luluJobId: { type: String, default: null },
     podPackageId: { type: String, default: null },
+    shippingLevel: { type: String, default: "MAIL" },
     trackingNumber: { type: String, default: null },
 
     shipByDate: { type: Date, default: null },
     orderedAt: { type: Date, default: null },
+
+    matchedVariantName: { type: String, default: null },
 
     aiFlags: [{ type: String }],
     notes: { type: String, default: "" },
@@ -127,7 +146,18 @@ const orderSchema = new Schema<IOrder>(
   { timestamps: true }
 );
 
-orderSchema.index({ etsyOrderId: 1, companyId: 1 }, { unique: true });
+// etsyItemId uniquely identifies a single line-item in channel exports.
+// Use a partial index so missing/null/empty values are ignored.
+// Note: $ne is not supported in partialFilterExpression; use $gt: "" instead.
+orderSchema.index(
+  { etsyItemId: 1, companyId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { etsyItemId: { $exists: true, $gt: "" } },
+  }
+);
+// etsyOrderId is no longer unique — one order ID can map to multiple line items
+orderSchema.index({ etsyOrderId: 1, companyId: 1 });
 orderSchema.index({ companyId: 1, storeId: 1, etsyStatus: 1 });
 orderSchema.index({ companyId: 1, luluStatus: 1 });
 orderSchema.index({ shipByDate: 1 });

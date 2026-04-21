@@ -3,6 +3,62 @@ type AIReviewResult = {
   isClean: boolean;
 };
 
+// Returns 0-based index of best-matching variant, or null if no confident match.
+export const matchVariantWithAI = async (
+  variantNames: string[],
+  variationText: string,
+  productTitle: string
+): Promise<number | null> => {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey || !variationText || variantNames.length === 0) return null;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+
+  try {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": process.env.FRONTEND_URL || "http://localhost:5173",
+        "X-Title": "Beatific Order Automation",
+      },
+      body: JSON.stringify({
+        model: "anthropic/claude-3-5-haiku",
+        messages: [
+          {
+            role: "user",
+            content: `Match this Etsy order variation to the correct product variant.
+
+Product: ${productTitle}
+Order variation: ${variationText}
+
+Available variants:
+${variantNames.map((n, i) => `${i + 1}. ${n}`).join("\n")}
+
+Reply with ONLY the variant number (1, 2, 3…) that best matches, or 0 if none match. No explanation.`,
+          },
+        ],
+        max_tokens: 5,
+        temperature: 0,
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeout);
+    if (!response.ok) return null;
+
+    const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+    const answer = (data.choices?.[0]?.message?.content ?? "").trim();
+    const idx = parseInt(answer, 10) - 1;
+    return idx >= 0 && idx < variantNames.length ? idx : null;
+  } catch {
+    clearTimeout(timeout);
+    return null;
+  }
+};
+
 export const reviewOrderPersonalization = async (
   personalization: Record<string, string>,
   productTitle: string

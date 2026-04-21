@@ -5,6 +5,15 @@ export interface IStore extends Document {
   companyId: mongoose.Types.ObjectId;
   etsyShopId: string | null;
   isActive: boolean;
+
+  // Lulu Print API settings (per-store, optional — falls back to env vars)
+  luluApiKey: string | null;
+  luluApiSecret: string | null;
+  luluApiBaseUrl: string | null;
+  luluSandboxMode: boolean;
+  shippingLevel: string;
+  contactEmail: string | null;
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -32,6 +41,14 @@ const storeSchema = new Schema<IStore>(
       type: Boolean,
       default: true,
     },
+
+    // Lulu settings
+    luluApiKey: { type: String, default: null, trim: true },
+    luluApiSecret: { type: String, default: null, trim: true },
+    luluApiBaseUrl: { type: String, default: null, trim: true },
+    luluSandboxMode: { type: Boolean, default: true },
+    shippingLevel: { type: String, default: "MAIL", trim: true },
+    contactEmail: { type: String, default: null, trim: true },
   },
   { timestamps: true }
 );
