@@ -46,6 +46,7 @@ export const updateProduct = async (
   if (input.interiorPdfUrl !== undefined) product.interiorPdfUrl = input.interiorPdfUrl || null;
   if (input.podPackageId !== undefined) product.podPackageId = input.podPackageId || null;
   if (input.variants !== undefined) product.variants = input.variants;
+  if (input.printTemplate !== undefined) product.printTemplate = input.printTemplate as any;
   if (input.isActive !== undefined) product.isActive = input.isActive;
 
   await product.save();

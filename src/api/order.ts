@@ -1,6 +1,13 @@
 import { Router, Request, Response, NextFunction } from "express";
-import { updateOrderStatusSchema, updateOrderSchema, bulkStatusUpdateSchema, bulkDeleteOrdersSchema } from "../domain/dtos/order";
+import {
+  updateOrderStatusSchema,
+  updateOrderSchema,
+  bulkStatusUpdateSchema,
+  bulkDeleteOrdersSchema,
+  templateValuesSchema,
+} from "../domain/dtos/order";
 import * as orderService from "../application/order";
+import * as templateService from "../application/template";
 import { isAuthenticated } from "./middleware/authentication-middleware";
 
 const router = Router();
@@ -53,6 +60,52 @@ router.get("/:id", isAuthenticated, async (req: Request, res: Response, next: Ne
 router.get("/:id/events", isAuthenticated, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const result = await orderService.getOrderEvents(req.params.id as string);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// PATCH /api/orders/:id/template-values
+router.patch("/:id/template-values", isAuthenticated, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const input = templateValuesSchema.parse(req.body);
+    const result = await templateService.saveOrderTemplateValues(
+      req.auth!.companyId as string,
+      req.params.id as string,
+      input.values
+    );
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/orders/:id/template-preview
+router.post("/:id/template-preview", isAuthenticated, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const input = templateValuesSchema.parse(req.body);
+    const result = await templateService.previewOrderTemplate(
+      req.auth!.companyId as string,
+      req.params.id as string,
+      input.values
+    );
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// POST /api/orders/:id/template-finalize
+router.post("/:id/template-finalize", isAuthenticated, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const input = templateValuesSchema.parse(req.body);
+    const result = await templateService.finalizeOrderTemplate(
+      req.auth!.companyId as string,
+      req.params.id as string,
+      req.auth!.userId as string,
+      input.values
+    );
     res.json(result);
   } catch (error) {
     next(error);

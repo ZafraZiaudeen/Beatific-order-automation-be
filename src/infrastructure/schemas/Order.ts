@@ -53,6 +53,11 @@ export interface IOrder extends Document {
   // Images
   coverImageUrl: string | null;
   interiorPdfUrl: string | null;
+  requiresTemplateFinalization: boolean;
+  templateFieldValues: Record<string, string>;
+  templateAiSuggestions: Record<string, string>;
+  templateWarnings: string[];
+  templateFinalizedAt: Date | null;
 
   // Lulu
   luluJobId: string | null;
@@ -127,6 +132,11 @@ const orderSchema = new Schema<IOrder>(
 
     coverImageUrl: { type: String, default: null },
     interiorPdfUrl: { type: String, default: null },
+    requiresTemplateFinalization: { type: Boolean, default: false },
+    templateFieldValues: { type: Schema.Types.Mixed, default: {} },
+    templateAiSuggestions: { type: Schema.Types.Mixed, default: {} },
+    templateWarnings: [{ type: String }],
+    templateFinalizedAt: { type: Date, default: null },
 
     luluJobId: { type: String, default: null },
     podPackageId: { type: String, default: null },
