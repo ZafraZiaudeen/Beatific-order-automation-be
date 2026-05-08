@@ -70,6 +70,7 @@ export interface IOrder extends Document {
   orderedAt: Date | null;
 
   // Variant
+  matchedVariantId: string | null;
   matchedVariantName: string | null;
 
   // Flags
@@ -146,6 +147,7 @@ const orderSchema = new Schema<IOrder>(
     shipByDate: { type: Date, default: null },
     orderedAt: { type: Date, default: null },
 
+    matchedVariantId: { type: String, default: null },
     matchedVariantName: { type: String, default: null },
 
     aiFlags: [{ type: String }],

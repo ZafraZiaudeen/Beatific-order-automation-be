@@ -1,6 +1,11 @@
 import { Router, Request, Response, NextFunction } from "express";
 import multer from "multer";
-import { createProductSchema, updateProductSchema, printTemplateSchema } from "../domain/dtos/product";
+import {
+  createProductSchema,
+  updateProductSchema,
+  printTemplateSchema,
+  variantTemplateUpdateSchema,
+} from "../domain/dtos/product";
 import * as productService from "../application/product";
 import * as templateService from "../application/template";
 import { isAuthenticated } from "./middleware/authentication-middleware";
@@ -82,12 +87,61 @@ router.patch("/:id/template", isAuthenticated, async (req: Request, res: Respons
   }
 });
 
+// POST /api/products/:id/variants/:variantId/template/import
+router.post(
+  "/:id/variants/:variantId/template/import",
+  isAuthenticated,
+  pdfUpload.single("file"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      if (!req.file) throw new ValidationError("No PDF file uploaded");
+      const kind = req.body.kind;
+      if (kind !== "cover" && kind !== "interior") {
+        throw new ValidationError("Template import kind must be cover or interior");
+      }
+
+      const result = await templateService.importVariantTemplatePdf(
+        req.auth!.companyId as string,
+        req.params.id as string,
+        req.params.variantId as string,
+        kind,
+        req.file
+      );
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+// PATCH /api/products/:id/variants/:variantId/template
+router.patch("/:id/variants/:variantId/template", isAuthenticated, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const input = variantTemplateUpdateSchema.parse(req.body);
+    const result = await templateService.saveVariantPrintTemplate(
+      req.auth!.companyId as string,
+      req.params.id as string,
+      req.params.variantId as string,
+      input
+    );
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
 // POST /api/products/:id/template/sample
 router.post("/:id/template/sample", isAuthenticated, async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const variantId = typeof req.body?.variantId === "string"
+      ? req.body.variantId
+      : typeof req.query.variantId === "string"
+        ? req.query.variantId
+        : undefined;
     const result = await templateService.generateProductTemplateSample(
       req.auth!.companyId as string,
-      req.params.id as string
+      req.params.id as string,
+      variantId
     );
     res.json(result);
   } catch (error) {

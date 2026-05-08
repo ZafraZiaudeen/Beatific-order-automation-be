@@ -37,9 +37,12 @@ const printTemplateFieldSchema = z.object({
   fontSize: z.number().positive(),
   fontFamily: z.string().default("Arial"),
   fontStyle: z.string().default("normal"),
+  fontWeight: z.number().positive().optional().nullable(),
+  fontFile: z.string().optional().nullable(),
   fill: z.string().default("#000000"),
   align: z.enum(["left", "center", "right"]).default("left"),
   lineHeight: z.number().positive().default(1.2),
+  rotation: z.number().default(0),
   required: z.boolean().default(true),
   replacementTextId: z.string().optional().nullable(),
   replacementBox: z
@@ -69,6 +72,27 @@ export const printTemplateSchema = z.object({
     .optional(),
 });
 
+export const templatePolicySchema = z.object({
+  cover: z.enum(["inherit", "override"]).default("inherit"),
+  interior: z.enum(["inherit", "override"]).default("inherit"),
+  fields: z.enum(["inherit", "override"]).default("inherit"),
+});
+
+const productVariantSchema = z.object({
+  _id: z.string().optional(),
+  name: z.string().min(1),
+  podPackageId: z.string().optional().nullable(),
+  interiorPdfUrl: z.string().url().optional().nullable(),
+  priceLabel: z.string().optional().nullable(),
+  templatePolicy: templatePolicySchema.optional(),
+  printTemplate: printTemplateSchema.optional(),
+});
+
+export const variantTemplateUpdateSchema = z.object({
+  fields: z.array(printTemplateFieldSchema).optional(),
+  templatePolicy: templatePolicySchema.optional(),
+});
+
 export const createProductSchema = z.object({
   listingId: z.string().min(1, "Listing ID is required").trim(),
   storeId: z.string().min(1, "Store ID is required"),
@@ -78,13 +102,7 @@ export const createProductSchema = z.object({
   podPackageId: z.string().optional().nullable(),
   printTemplate: printTemplateSchema.optional(),
   variants: z
-    .array(
-      z.object({
-        name: z.string().min(1),
-        podPackageId: z.string().min(1),
-        interiorPdfUrl: z.string().url().optional().nullable(),
-      })
-    )
+    .array(productVariantSchema)
     .optional()
     .default([]),
 });
@@ -96,13 +114,7 @@ export const updateProductSchema = z.object({
   podPackageId: z.string().optional().nullable(),
   printTemplate: printTemplateSchema.optional(),
   variants: z
-    .array(
-      z.object({
-        name: z.string().min(1),
-        podPackageId: z.string().min(1),
-        interiorPdfUrl: z.string().url().optional().nullable(),
-      })
-    )
+    .array(productVariantSchema)
     .optional(),
   isActive: z.boolean().optional(),
 });

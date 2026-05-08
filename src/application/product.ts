@@ -45,7 +45,7 @@ export const updateProduct = async (
   if (input.coverImageUrl !== undefined) product.coverImageUrl = input.coverImageUrl || null;
   if (input.interiorPdfUrl !== undefined) product.interiorPdfUrl = input.interiorPdfUrl || null;
   if (input.podPackageId !== undefined) product.podPackageId = input.podPackageId || null;
-  if (input.variants !== undefined) product.variants = input.variants;
+  if (input.variants !== undefined) product.variants = input.variants as any;
   if (input.printTemplate !== undefined) product.printTemplate = input.printTemplate as any;
   if (input.isActive !== undefined) product.isActive = input.isActive;
 

@@ -21,6 +21,7 @@ export const updateOrderSchema = z.object({
   personalization: z.record(z.string()).optional(),
   templateFieldValues: z.record(z.string()).optional(),
   shippingLevel: z.string().optional(),
+  matchedVariantId: z.string().optional().nullable(),
   matchedVariantName: z.string().optional().nullable(),
 });
 

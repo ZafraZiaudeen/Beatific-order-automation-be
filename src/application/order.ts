@@ -183,6 +183,7 @@ export const updateOrder = async (
   if (input.personalization !== undefined) order.personalization = input.personalization;
   if (input.templateFieldValues !== undefined) order.templateFieldValues = input.templateFieldValues;
   if (input.shippingLevel !== undefined) order.shippingLevel = input.shippingLevel;
+  if (input.matchedVariantId !== undefined) order.matchedVariantId = input.matchedVariantId || null;
   if (input.matchedVariantName !== undefined) order.matchedVariantName = input.matchedVariantName || null;
 
   // Check if has custom artwork

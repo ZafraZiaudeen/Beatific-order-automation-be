@@ -8,30 +8,15 @@ export interface IProduct extends Document {
   coverImageUrl: string | null;
   interiorPdfUrl: string | null;
   podPackageId: string | null;
-  variants: {
-    name: string;
-    podPackageId: string;
-    interiorPdfUrl?: string | null;
-  }[];
-  printTemplate?: {
-    cover?: PrintTemplatePage | null;
-    interior?: PrintTemplatePage | null;
-    fields: PrintTemplateField[];
-    sampleOutputs?: {
-      coverPdfUrl?: string | null;
-      interiorPdfUrl?: string | null;
-      coverPreviewUrl?: string | null;
-      interiorPreviewUrl?: string | null;
-      warnings?: string[];
-      generatedAt?: Date | null;
-    };
-  };
+  variants: ProductVariant[];
+  printTemplate?: PrintTemplate;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
 
 export type TemplateTarget = "cover" | "interiorFirstPage";
+export type TemplatePolicyValue = "inherit" | "override";
 
 export interface ExtractedTemplateText {
   id: string;
@@ -68,9 +53,12 @@ export interface PrintTemplateField {
   fontSize: number;
   fontFamily: string;
   fontStyle: string;
+  fontWeight?: number | null;
+  fontFile?: string | null;
   fill: string;
   align: "left" | "center" | "right";
   lineHeight: number;
+  rotation?: number;
   required: boolean;
   replacementTextId?: string | null;
   replacementBox?: {
@@ -79,6 +67,34 @@ export interface PrintTemplateField {
     width: number;
     height: number;
   } | null;
+}
+
+export interface PrintTemplate {
+  cover?: PrintTemplatePage | null;
+  interior?: PrintTemplatePage | null;
+  fields: PrintTemplateField[];
+  sampleOutputs?: {
+    coverPdfUrl?: string | null;
+    interiorPdfUrl?: string | null;
+    coverPreviewUrl?: string | null;
+    interiorPreviewUrl?: string | null;
+    warnings?: string[];
+    generatedAt?: Date | null;
+  };
+}
+
+export interface ProductVariant {
+  _id?: mongoose.Types.ObjectId | string;
+  name: string;
+  podPackageId?: string | null;
+  interiorPdfUrl?: string | null;
+  priceLabel?: string | null;
+  templatePolicy?: {
+    cover?: TemplatePolicyValue;
+    interior?: TemplatePolicyValue;
+    fields?: TemplatePolicyValue;
+  };
+  printTemplate?: PrintTemplate;
 }
 
 const extractedTemplateTextSchema = new Schema<ExtractedTemplateText>(
@@ -93,6 +109,15 @@ const extractedTemplateTextSchema = new Schema<ExtractedTemplateText>(
     fontFamily: { type: String, default: "Arial" },
     fontStyle: { type: String, default: "normal" },
     fill: { type: String, default: "#000000" },
+  },
+  { _id: false }
+);
+
+const templatePolicySchema = new Schema(
+  {
+    cover: { type: String, enum: ["inherit", "override"], default: "inherit" },
+    interior: { type: String, enum: ["inherit", "override"], default: "inherit" },
+    fields: { type: String, enum: ["inherit", "override"], default: "inherit" },
   },
   { _id: false }
 );
@@ -127,9 +152,12 @@ const printTemplateFieldSchema = new Schema<PrintTemplateField>(
     fontSize: { type: Number, required: true },
     fontFamily: { type: String, default: "Arial" },
     fontStyle: { type: String, default: "normal" },
+    fontWeight: { type: Number, default: 400 },
+    fontFile: { type: String, default: null },
     fill: { type: String, default: "#000000" },
     align: { type: String, enum: ["left", "center", "right"], default: "left" },
     lineHeight: { type: Number, default: 1.2 },
+    rotation: { type: Number, default: 0 },
     required: { type: Boolean, default: true },
     replacementTextId: { type: String, default: null },
     replacementBox: {
@@ -184,8 +212,23 @@ const productSchema = new Schema<IProduct>(
     variants: [
       {
         name: { type: String, required: true },
-        podPackageId: { type: String, required: true },
+        podPackageId: { type: String, default: null },
         interiorPdfUrl: { type: String, default: null },
+        priceLabel: { type: String, default: null },
+        templatePolicy: { type: templatePolicySchema, default: () => ({}) },
+        printTemplate: {
+          cover: { type: printTemplatePageSchema, default: null },
+          interior: { type: printTemplatePageSchema, default: null },
+          fields: { type: [printTemplateFieldSchema], default: [] },
+          sampleOutputs: {
+            coverPdfUrl: { type: String, default: null },
+            interiorPdfUrl: { type: String, default: null },
+            coverPreviewUrl: { type: String, default: null },
+            interiorPreviewUrl: { type: String, default: null },
+            warnings: { type: [String], default: [] },
+            generatedAt: { type: Date, default: null },
+          },
+        },
       },
     ],
     printTemplate: {
