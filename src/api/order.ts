@@ -1,5 +1,7 @@
 import { Router, Request, Response, NextFunction } from "express";
+import { createHmac, timingSafeEqual } from "crypto";
 import {
+  ingestOrderSchema,
   updateOrderStatusSchema,
   updateOrderSchema,
   bulkStatusUpdateSchema,
@@ -9,8 +11,58 @@ import {
 import * as orderService from "../application/order";
 import * as templateService from "../application/template";
 import { isAuthenticated } from "./middleware/authentication-middleware";
+import UnauthorizedError from "../domain/errors/unauthorized-error";
+import ValidationError from "../domain/errors/validation-error";
 
 const router = Router();
+
+const timingSafeStringEqual = (left: string, right: string) => {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+};
+
+const verifyIngestSignature = (req: Request) => {
+  const secret = process.env.N8N_INGEST_SECRET || process.env.INGEST_SECRET;
+  if (!secret) {
+    throw new Error("N8N_INGEST_SECRET or INGEST_SECRET is missing in backend env");
+  }
+
+  const signature = String(req.header("x-signature") || "").trim();
+  if (!signature) throw new UnauthorizedError("Missing n8n ingest signature");
+
+  const rawBody = req.rawBody || JSON.stringify(req.body || {});
+  const expectedHex = createHmac("sha256", secret).update(rawBody).digest("hex");
+  const expectedPrefixed = `sha256=${expectedHex}`;
+
+  if (
+    !timingSafeStringEqual(signature, expectedHex) &&
+    !timingSafeStringEqual(signature, expectedPrefixed)
+  ) {
+    throw new UnauthorizedError("Invalid n8n ingest signature");
+  }
+};
+
+// POST /api/orders/ingest -- signed n8n order ingest
+router.post("/ingest", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    verifyIngestSignature(req);
+
+    const headerCompanyId = String(req.header("x-company-id") || "").trim();
+    const bodyCompanyId = typeof req.body?.companyId === "string" ? req.body.companyId.trim() : "";
+    const companyId = headerCompanyId || bodyCompanyId;
+    if (!companyId) throw new ValidationError("X-Company-Id header is required");
+    if (bodyCompanyId && bodyCompanyId !== companyId) {
+      throw new ValidationError("Body companyId does not match X-Company-Id");
+    }
+
+    const input = ingestOrderSchema.parse({ ...req.body, companyId });
+    const result = await orderService.ingestOrderFromN8n(companyId, input);
+    res.status(result.created ? 201 : 200).json(result);
+  } catch (error) {
+    next(error);
+  }
+});
 
 // GET /api/orders
 router.get("/", isAuthenticated, async (req: Request, res: Response, next: NextFunction) => {

@@ -26,6 +26,21 @@ export interface IOrder extends Document {
   productId: mongoose.Types.ObjectId | null;
   listingId: string | null;
 
+  ingestSource: string | null;
+  projectName: string | null;
+  suffix: string | null;
+  totalItemsInOrder: number | null;
+  itemIndexInOrder: number | null;
+  isFirstItem: boolean;
+  shop: string | null;
+  option1Name: string | null;
+  option1Value: string | null;
+  option2Name: string | null;
+  option2Value: string | null;
+  buyerNote: string | null;
+  pricing: Record<string, unknown> | null;
+  rawIngestPayload: Record<string, unknown> | null;
+
   // Status
   etsyStatus: EtsyOrderStatus;
   luluStatus: LuluOrderStatus | null;
@@ -101,6 +116,21 @@ const orderSchema = new Schema<IOrder>(
     storeId: { type: Schema.Types.ObjectId, ref: "Store", required: true },
     productId: { type: Schema.Types.ObjectId, ref: "Product", default: null },
     listingId: { type: String, default: null },
+
+    ingestSource: { type: String, default: null, trim: true },
+    projectName: { type: String, default: null, trim: true },
+    suffix: { type: String, default: null, trim: true },
+    totalItemsInOrder: { type: Number, default: null },
+    itemIndexInOrder: { type: Number, default: null },
+    isFirstItem: { type: Boolean, default: true },
+    shop: { type: String, default: null, trim: true },
+    option1Name: { type: String, default: null, trim: true },
+    option1Value: { type: String, default: null, trim: true },
+    option2Name: { type: String, default: null, trim: true },
+    option2Value: { type: String, default: null, trim: true },
+    buyerNote: { type: String, default: null },
+    pricing: { type: Schema.Types.Mixed, default: null },
+    rawIngestPayload: { type: Schema.Types.Mixed, default: null },
 
     etsyStatus: {
       type: String,

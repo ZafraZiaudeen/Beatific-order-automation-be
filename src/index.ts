@@ -19,7 +19,12 @@ const app = express();
 
 // Middleware
 app.use(cors());
-app.use(express.json({ limit: "10mb" }));
+app.use(express.json({
+  limit: "10mb",
+  verify: (req, _res, buf) => {
+    (req as express.Request).rawBody = buf.toString("utf8");
+  },
+}));
 
 // Routes
 app.use("/api/auth", authRouter);
