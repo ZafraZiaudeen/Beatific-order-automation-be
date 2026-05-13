@@ -26,6 +26,15 @@ app.use(express.json({
   },
 }));
 
+app.use(async (_req, _res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Routes
 app.use("/api/auth", authRouter);
 app.use("/api/team", teamRouter);
@@ -45,22 +54,31 @@ app.get("/api/health", (_req, res) => {
 // Global error handler (must be last)
 app.use(globalErrorHandlingMiddleware);
 
-// Connect to DB and start server
-connectDB();
-const PORT = process.env.PORT || 8000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+if (!process.env.VERCEL) {
+  const PORT = process.env.PORT || 8000;
 
-  // Start cron jobs
-  cron.schedule("0 */6 * * *", async () => {
-    console.log("[Cron] Polling Lulu statuses...");
+  app.listen(PORT, async () => {
+    console.log(`Server running on port ${PORT}`);
+
     try {
-      const result = await pollLuluStatuses();
-      console.log(`[Cron] Updated ${result.updated} orders`);
-    } catch (err) {
-      console.error("[Cron] Lulu polling failed:", err);
+      await connectDB();
+    } catch (error) {
+      console.error("Initial MongoDB connection failed", error);
     }
-  });
 
-  console.log("[Cron] Lulu status polling scheduled (every 6 hours)");
-});
+    // Run cron jobs only in the long-lived local/server process.
+    cron.schedule("0 */6 * * *", async () => {
+      console.log("[Cron] Polling Lulu statuses...");
+      try {
+        const result = await pollLuluStatuses();
+        console.log(`[Cron] Updated ${result.updated} orders`);
+      } catch (err) {
+        console.error("[Cron] Lulu polling failed:", err);
+      }
+    });
+
+    console.log("[Cron] Lulu status polling scheduled (every 6 hours)");
+  });
+}
+
+export default app;

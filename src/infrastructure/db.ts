@@ -40,10 +40,16 @@ const ensureOrderIndexes = async () => {
   }
 };
 
-let isConnected = false;
+let connectionPromise: Promise<typeof mongoose> | null = null;
 
 const connectDB = async () => {
-  if (isConnected) return;
+  if (mongoose.connection.readyState === 1) {
+    return mongoose;
+  }
+
+  if (connectionPromise) {
+    return connectionPromise;
+  }
 
   try {
     const MONGODB_URL = process.env.MONGODB_URL;
@@ -52,12 +58,18 @@ const connectDB = async () => {
       throw new Error("MONGODB_URL is missing in env");
     }
 
-    await mongoose.connect(MONGODB_URL);
+    connectionPromise = mongoose.connect(MONGODB_URL, {
+      serverSelectionTimeoutMS: 10000,
+    });
+
+    await connectionPromise;
     await ensureOrderIndexes();
-    isConnected = true;
     console.log("Connected to MongoDB");
+    return mongoose;
   } catch (error) {
     console.error("Error connecting to MongoDB", error);
+    connectionPromise = null;
+    throw error;
   }
 };
 
