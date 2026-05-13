@@ -151,3 +151,77 @@ If issues found, set isClean to false.`,
     return { flags: ["AI review skipped"], isClean: true };
   }
 };
+
+export const suggestTemplateFieldValues = async (
+  fields: Array<{ key: string; label: string; sampleValue?: string; required?: boolean }>,
+  orderContext: {
+    productTitle: string;
+    customerName: string;
+    personalization: Record<string, string>;
+    notes?: string | null;
+  }
+): Promise<Record<string, string>> => {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey || fields.length === 0) return {};
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+
+  try {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": process.env.FRONTEND_URL || "http://localhost:5173",
+        "X-Title": "Beatific Order Automation",
+      },
+      body: JSON.stringify({
+        model: "anthropic/claude-3-5-haiku",
+        messages: [
+          {
+            role: "system",
+            content:
+              "You map Etsy personalization data into product template fields. Reply only with a JSON object whose keys are template field keys and values are strings. Use an empty string when unsure.",
+          },
+          {
+            role: "user",
+            content: `Product: ${orderContext.productTitle}
+Customer name: ${orderContext.customerName}
+Order notes: ${orderContext.notes || ""}
+
+Template fields:
+${JSON.stringify(fields, null, 2)}
+
+Imported personalization:
+${JSON.stringify(orderContext.personalization, null, 2)}
+
+Return JSON only, for example {"front_cover_name":"Jane"}.`,
+          },
+        ],
+        max_tokens: 400,
+        temperature: 0,
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeout);
+    if (!response.ok) return {};
+
+    const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    const content = data.choices?.[0]?.message?.content || "";
+    const match = content.match(/\{[\s\S]*\}/);
+    if (!match) return {};
+
+    const parsed = JSON.parse(match[0]) as Record<string, unknown>;
+    const validKeys = new Set(fields.map((field) => field.key));
+    const result: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (validKeys.has(key)) result[key] = typeof value === "string" ? value : String(value ?? "");
+    }
+    return result;
+  } catch {
+    clearTimeout(timeout);
+    return {};
+  }
+};

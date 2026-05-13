@@ -1,5 +1,98 @@
 import { z } from "zod";
 
+const extractedTemplateTextSchema = z.object({
+  id: z.string().min(1),
+  text: z.string().default(""),
+  x: z.number(),
+  y: z.number(),
+  width: z.number(),
+  height: z.number(),
+  fontSize: z.number(),
+  fontFamily: z.string().default("Arial"),
+  fontStyle: z.string().default("normal"),
+  fill: z.string().default("#000000"),
+});
+
+const printTemplatePageSchema = z
+  .object({
+    sourcePdfUrl: z.string().url().nullable().optional(),
+    previewImageUrl: z.string().url().nullable().optional(),
+    pageWidth: z.number().nonnegative().default(0),
+    pageHeight: z.number().nonnegative().default(0),
+    pageCount: z.number().int().nonnegative().default(0),
+    extractedText: z.array(extractedTemplateTextSchema).default([]),
+  })
+  .nullable();
+
+const printTemplateFieldSchema = z.object({
+  id: z.string().min(1),
+  key: z.string().min(1).trim(),
+  label: z.string().min(1).trim(),
+  sampleValue: z.string().default(""),
+  target: z.enum(["cover", "interiorFirstPage"]),
+  x: z.number(),
+  y: z.number(),
+  width: z.number().positive(),
+  height: z.number().positive(),
+  fontSize: z.number().positive(),
+  fontFamily: z.string().default("Arial"),
+  fontStyle: z.string().default("normal"),
+  fontWeight: z.number().positive().optional().nullable(),
+  fontFile: z.string().optional().nullable(),
+  fill: z.string().default("#000000"),
+  align: z.enum(["left", "center", "right"]).default("left"),
+  lineHeight: z.number().positive().default(1.2),
+  rotation: z.number().default(0),
+  required: z.boolean().default(true),
+  replacementTextId: z.string().optional().nullable(),
+  replacementBox: z
+    .object({
+      x: z.number(),
+      y: z.number(),
+      width: z.number().positive(),
+      height: z.number().positive(),
+    })
+    .optional()
+    .nullable(),
+});
+
+export const printTemplateSchema = z.object({
+  cover: printTemplatePageSchema.optional(),
+  interior: printTemplatePageSchema.optional(),
+  fields: z.array(printTemplateFieldSchema).default([]),
+  sampleOutputs: z
+    .object({
+      coverPdfUrl: z.string().url().optional().nullable(),
+      interiorPdfUrl: z.string().url().optional().nullable(),
+      coverPreviewUrl: z.string().url().optional().nullable(),
+      interiorPreviewUrl: z.string().url().optional().nullable(),
+      warnings: z.array(z.string()).optional().default([]),
+      generatedAt: z.coerce.date().optional().nullable(),
+    })
+    .optional(),
+});
+
+export const templatePolicySchema = z.object({
+  cover: z.enum(["inherit", "override"]).default("inherit"),
+  interior: z.enum(["inherit", "override"]).default("inherit"),
+  fields: z.enum(["inherit", "override"]).default("inherit"),
+});
+
+const productVariantSchema = z.object({
+  _id: z.string().optional(),
+  name: z.string().min(1),
+  podPackageId: z.string().optional().nullable(),
+  interiorPdfUrl: z.string().url().optional().nullable(),
+  priceLabel: z.string().optional().nullable(),
+  templatePolicy: templatePolicySchema.optional(),
+  printTemplate: printTemplateSchema.optional(),
+});
+
+export const variantTemplateUpdateSchema = z.object({
+  fields: z.array(printTemplateFieldSchema).optional(),
+  templatePolicy: templatePolicySchema.optional(),
+});
+
 export const createProductSchema = z.object({
   listingId: z.string().min(1, "Listing ID is required").trim(),
   storeId: z.string().min(1, "Store ID is required"),
@@ -7,14 +100,9 @@ export const createProductSchema = z.object({
   coverImageUrl: z.string().url().optional().nullable(),
   interiorPdfUrl: z.string().url().optional().nullable(),
   podPackageId: z.string().optional().nullable(),
+  printTemplate: printTemplateSchema.optional(),
   variants: z
-    .array(
-      z.object({
-        name: z.string().min(1),
-        podPackageId: z.string().min(1),
-        interiorPdfUrl: z.string().url(),
-      })
-    )
+    .array(productVariantSchema)
     .optional()
     .default([]),
 });
@@ -24,14 +112,9 @@ export const updateProductSchema = z.object({
   coverImageUrl: z.string().url().optional().nullable(),
   interiorPdfUrl: z.string().url().optional().nullable(),
   podPackageId: z.string().optional().nullable(),
+  printTemplate: printTemplateSchema.optional(),
   variants: z
-    .array(
-      z.object({
-        name: z.string().min(1),
-        podPackageId: z.string().min(1),
-        interiorPdfUrl: z.string().url(),
-      })
-    )
+    .array(productVariantSchema)
     .optional(),
   isActive: z.boolean().optional(),
 });

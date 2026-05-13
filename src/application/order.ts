@@ -8,8 +8,13 @@ const getReadyToOrderMissingFields = (order: {
   coverImageUrl?: string | null;
   interiorPdfUrl?: string | null;
   podPackageId?: string | null;
+  requiresTemplateFinalization?: boolean;
+  templateFinalizedAt?: Date | null;
 }) => {
   const missing: string[] = [];
+  if (order.requiresTemplateFinalization && !order.templateFinalizedAt) {
+    missing.push("personalized print PDFs");
+  }
   if (!order.coverImageUrl) missing.push("cover image");
   if (!order.interiorPdfUrl) missing.push("inside page PDF");
   if (!order.podPackageId) missing.push("Pod Package ID");
@@ -176,7 +181,9 @@ export const updateOrder = async (
   if (input.podPackageId !== undefined) order.podPackageId = input.podPackageId || null;
   if (input.notes !== undefined) order.notes = input.notes;
   if (input.personalization !== undefined) order.personalization = input.personalization;
+  if (input.templateFieldValues !== undefined) order.templateFieldValues = input.templateFieldValues;
   if (input.shippingLevel !== undefined) order.shippingLevel = input.shippingLevel;
+  if (input.matchedVariantId !== undefined) order.matchedVariantId = input.matchedVariantId || null;
   if (input.matchedVariantName !== undefined) order.matchedVariantName = input.matchedVariantName || null;
 
   // Check if has custom artwork

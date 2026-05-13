@@ -4,7 +4,12 @@ import Product from "../infrastructure/schemas/Product";
 import OrderEvent from "../infrastructure/schemas/OrderEvent";
 import { notifySlack } from "../infrastructure/slack";
 import { createNotification } from "./notification";
-import { reviewOrderPersonalization, matchVariantWithAI } from "../infrastructure/openrouter";
+import {
+  reviewOrderPersonalization,
+  matchVariantWithAI,
+  suggestTemplateFieldValues,
+} from "../infrastructure/openrouter";
+import { productHasPrintTemplate, resolveEffectiveTemplate } from "./template";
 
 type ImportResult = {
   total: number;
@@ -163,7 +168,12 @@ const parsePersonalization = (raw: string): Record<string, string> => {
   return result;
 };
 
-type ProductVariant = { name: string; podPackageId: string; interiorPdfUrl: string };
+type ProductVariant = {
+  _id?: unknown;
+  name: string;
+  podPackageId?: string | null;
+  interiorPdfUrl?: string | null;
+};
 
 const matchProductVariant = async (
   variants: ProductVariant[],
@@ -306,7 +316,9 @@ export const importSpreadsheet = async (
 
       let resolvedInteriorUrl = product?.interiorPdfUrl || null;
       let resolvedPodPackageId = product?.podPackageId || null;
+      let matchedVariantId: string | null = null;
       let matchedVariantName: string | null = null;
+      let templateAiSuggestions: Record<string, string> = {};
 
       if (product && product.variants && product.variants.length > 0) {
         const matched = await matchProductVariant(
@@ -317,8 +329,31 @@ export const importSpreadsheet = async (
         if (matched) {
           resolvedInteriorUrl = matched.interiorPdfUrl || resolvedInteriorUrl;
           resolvedPodPackageId = matched.podPackageId || resolvedPodPackageId;
+          matchedVariantId = matched._id ? String(matched._id) : null;
           matchedVariantName = matched.name;
         }
+      }
+
+      const variantKey = matchedVariantId || matchedVariantName;
+      const requiresTemplateFinalization = Boolean(product && productHasPrintTemplate(product, variantKey));
+
+      if (product && requiresTemplateFinalization) {
+        resolvedInteriorUrl = null;
+        const effectiveTemplate = resolveEffectiveTemplate(product, variantKey).template;
+        templateAiSuggestions = await suggestTemplateFieldValues(
+          (effectiveTemplate.fields || []).map((field: any) => ({
+            key: field.key,
+            label: field.label,
+            sampleValue: field.sampleValue,
+            required: field.required,
+          })),
+          {
+            productTitle,
+            customerName: mapped.customerName || mapped.shippingName || "Unknown",
+            personalization,
+            notes: mapped.notes || mapped.giftMessage || "",
+          }
+        );
       }
 
       const order = new Order({
@@ -347,9 +382,13 @@ export const importSpreadsheet = async (
         quantity,
         price: parseFloat(mapped.price) || 0,
         shippingCost: parseFloat(mapped.shippingCost) || 0,
-        coverImageUrl: product?.coverImageUrl || null,
+        coverImageUrl: requiresTemplateFinalization ? null : product?.coverImageUrl || null,
         interiorPdfUrl: resolvedInteriorUrl,
         podPackageId: resolvedPodPackageId,
+        requiresTemplateFinalization,
+        templateAiSuggestions,
+        templateFieldValues: templateAiSuggestions,
+        matchedVariantId,
         matchedVariantName,
         shipByDate: parseDate(mapped.shipByDate),
         orderedAt: parseDate(mapped.orderedAt),
