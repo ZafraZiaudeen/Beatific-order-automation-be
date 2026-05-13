@@ -22,6 +22,30 @@ const timingSafeStringEqual = (left: string, right: string) => {
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
 };
 
+const collectCandidateBodies = (req: Request) => {
+  const candidates = new Set<string>();
+
+  if (typeof req.rawBody === "string" && req.rawBody.length > 0) {
+    candidates.add(req.rawBody);
+
+    try {
+      candidates.add(JSON.stringify(JSON.parse(req.rawBody)));
+    } catch {
+      // Raw body is not parseable JSON; keep the original body candidate only.
+    }
+  }
+
+  if (req.body !== undefined) {
+    if (typeof req.body === "string") {
+      candidates.add(req.body);
+    } else {
+      candidates.add(JSON.stringify(req.body));
+    }
+  }
+
+  return [...candidates].filter((value) => value.length > 0);
+};
+
 const verifyIngestSignature = (req: Request) => {
   const secret = process.env.N8N_INGEST_SECRET || process.env.INGEST_SECRET;
   if (!secret) {
@@ -31,16 +55,28 @@ const verifyIngestSignature = (req: Request) => {
   const signature = String(req.header("x-signature") || "").trim();
   if (!signature) throw new UnauthorizedError("Missing n8n ingest signature");
 
-  const rawBody = req.rawBody || JSON.stringify(req.body || {});
-  const expectedHex = createHmac("sha256", secret).update(rawBody).digest("hex");
-  const expectedPrefixed = `sha256=${expectedHex}`;
-
-  if (
-    !timingSafeStringEqual(signature, expectedHex) &&
-    !timingSafeStringEqual(signature, expectedPrefixed)
-  ) {
-    throw new UnauthorizedError("Invalid n8n ingest signature");
+  const bodyCandidates = collectCandidateBodies(req);
+  const secretCandidates = new Set([secret]);
+  const trimmedSecret = secret.trim();
+  if (trimmedSecret && trimmedSecret !== secret) {
+    secretCandidates.add(trimmedSecret);
   }
+
+  for (const candidateSecret of secretCandidates) {
+    for (const candidateBody of bodyCandidates) {
+      const expectedHex = createHmac("sha256", candidateSecret).update(candidateBody).digest("hex");
+      const expectedPrefixed = `sha256=${expectedHex}`;
+
+      if (
+        timingSafeStringEqual(signature, expectedHex) ||
+        timingSafeStringEqual(signature, expectedPrefixed)
+      ) {
+        return;
+      }
+    }
+  }
+
+  throw new UnauthorizedError("Invalid n8n ingest signature");
 };
 
 // POST /api/orders/ingest -- signed n8n order ingest
