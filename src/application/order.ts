@@ -1,8 +1,18 @@
 import Order from "../infrastructure/schemas/Order";
 import OrderEvent from "../infrastructure/schemas/OrderEvent";
-import { UpdateOrderStatusInput, UpdateOrderInput, BulkStatusUpdateInput, BulkDeleteOrdersInput } from "../domain/dtos/order";
+import Product, { ProductVariant } from "../infrastructure/schemas/Product";
+import Store from "../infrastructure/schemas/Store";
+import Company from "../infrastructure/schemas/Company";
+import {
+  UpdateOrderStatusInput,
+  UpdateOrderInput,
+  BulkStatusUpdateInput,
+  BulkDeleteOrdersInput,
+  IngestOrderInput,
+} from "../domain/dtos/order";
 import NotFoundError from "../domain/errors/not-found-error";
 import ValidationError from "../domain/errors/validation-error";
+import { productHasPrintTemplate, resolveEffectiveTemplate } from "./template";
 
 const getReadyToOrderMissingFields = (order: {
   coverImageUrl?: string | null;
@@ -30,6 +40,284 @@ const assertReadyToOrderRequirements = (order: {
   if (missing.length > 0) {
     throw new ValidationError(`Cannot move to \"Ready to Order\". Missing: ${missing.join(", ")}.`);
   }
+};
+
+const normalizeString = (value?: string | null) => {
+  const trimmed = String(value ?? "").trim();
+  return trimmed || "";
+};
+
+const nullableStringValue = (value?: string | null) => normalizeString(value) || null;
+
+const parseDate = (raw?: string | null, fallbackYear?: number | null): Date | null => {
+  const value = normalizeString(raw);
+  if (!value) return null;
+
+  const withYear = /\b\d{4}\b/.test(value) || !fallbackYear
+    ? value
+    : `${value}, ${fallbackYear}`;
+  const parsed = new Date(withYear);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const addPersonalizationValue = (
+  target: Record<string, string>,
+  rawKey?: string | null,
+  rawValue?: string | null
+) => {
+  const key = normalizeString(rawKey);
+  const value = normalizeString(rawValue);
+  if (!key || !value) return;
+
+  let uniqueKey = key;
+  let counter = 2;
+  while (Object.prototype.hasOwnProperty.call(target, uniqueKey)) {
+    uniqueKey = `${key} ${counter}`;
+    counter++;
+  }
+  target[uniqueKey] = value;
+};
+
+const buildPersonalizationRecord = (input: IngestOrderInput) => {
+  const personalization: Record<string, string> = {};
+  addPersonalizationValue(personalization, input.option1Name || "Option 1", input.option1Value);
+  addPersonalizationValue(personalization, input.option2Name || "Option 2", input.option2Value);
+
+  for (const field of input.personalization || []) {
+    addPersonalizationValue(personalization, field.label, field.value);
+  }
+
+  return Object.fromEntries(
+    Object.entries(personalization).sort(([a], [b]) => a.localeCompare(b))
+  );
+};
+
+const normalizeForMatch = (value: string) =>
+  value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+const matchIngestVariant = (
+  variants: ProductVariant[] | undefined,
+  input: IngestOrderInput,
+  personalization: Record<string, string>
+): ProductVariant | null => {
+  if (!variants?.length) return null;
+  if (variants.length === 1) return variants[0];
+
+  const haystack = normalizeForMatch([
+    input.option1Value,
+    input.option2Value,
+    input.cleanTitle,
+    ...Object.values(personalization),
+  ].filter(Boolean).join(" "));
+
+  if (!haystack) return null;
+  return variants.find((variant) => {
+    const name = normalizeForMatch(variant.name || "");
+    if (!name) return false;
+    return haystack.includes(name) || name.includes(haystack);
+  }) || null;
+};
+
+const getVariantId = (variant: ProductVariant | null) => {
+  const raw = (variant as { _id?: unknown } | null)?._id;
+  return raw ? String(raw) : null;
+};
+
+const buildTemplateSeedValues = (
+  fields: Array<{ key: string; label: string; sampleValue?: string }>,
+  personalization: Record<string, string>,
+  input: IngestOrderInput
+) => {
+  const values: Record<string, string> = {};
+  const entries = Object.entries(personalization);
+
+  for (const field of fields) {
+    const keyMatch = entries.find(([key]) => normalizeForMatch(key) === normalizeForMatch(field.key));
+    const labelMatch = entries.find(([key]) => normalizeForMatch(key) === normalizeForMatch(field.label));
+    const looseMatch = entries.find(([key]) => {
+      const normalizedKey = normalizeForMatch(key);
+      return (
+        normalizedKey.includes(normalizeForMatch(field.key)) ||
+        normalizedKey.includes(normalizeForMatch(field.label))
+      );
+    });
+
+    values[field.key] =
+      keyMatch?.[1] ||
+      labelMatch?.[1] ||
+      looseMatch?.[1] ||
+      (normalizeForMatch(field.key).includes("name") ? normalizeString(input.customer?.name) : "") ||
+      field.sampleValue ||
+      "";
+  }
+
+  return values;
+};
+
+const resolveIngestStore = async (companyId: string, input: IngestOrderInput) => {
+  const storeId = normalizeString(input.storeId);
+  if (storeId) {
+    const store = await Store.findOne({ _id: storeId, companyId });
+    if (!store) throw new ValidationError("Store ID does not belong to this company");
+    return store;
+  }
+
+  const storeName = (normalizeString(input.shop) || "Etsy").slice(0, 100);
+  return Store.findOneAndUpdate(
+    { companyId, name: storeName },
+    {
+      $setOnInsert: {
+        companyId,
+        name: storeName,
+        etsyShopId: normalizeString(input.shop) || null,
+        isActive: true,
+      },
+    },
+    { new: true, upsert: true, setDefaultsOnInsert: true }
+  );
+};
+
+export const ingestOrderFromN8n = async (
+  companyId: string,
+  input: IngestOrderInput
+) => {
+  const company = await Company.findById(companyId).lean();
+  if (!company) throw new ValidationError("Company not found for n8n ingest");
+
+  const store = await resolveIngestStore(companyId, input);
+  const personalization = buildPersonalizationRecord(input);
+  const product = normalizeString(input.listingId)
+    ? await Product.findOne({ listingId: normalizeString(input.listingId), companyId }).lean()
+    : null;
+  const matchedVariant = product
+    ? matchIngestVariant(product.variants as ProductVariant[] | undefined, input, personalization)
+    : null;
+  const matchedVariantId = getVariantId(matchedVariant);
+  const matchedVariantName = matchedVariant?.name || null;
+  const variantKey = matchedVariantId || matchedVariantName;
+  const requiresTemplateFinalization = Boolean(product && productHasPrintTemplate(product, variantKey));
+  const template = product && requiresTemplateFinalization
+    ? resolveEffectiveTemplate(product, variantKey).template
+    : null;
+  const templateSeedValues = template?.fields?.length
+    ? buildTemplateSeedValues(template.fields, personalization, input)
+    : {};
+
+  const orderedAt = parseDate(input.paymentDate);
+  const shipByDate = parseDate(
+    input.shipBy,
+    orderedAt?.getUTCFullYear() || new Date().getUTCFullYear()
+  );
+  const productTitle =
+    normalizeString(input.cleanTitle) ||
+    normalizeString(product?.title) ||
+    "Unknown Product";
+  const customerName = normalizeString(input.customer?.name) || "Unknown";
+  const etsyItemId =
+    normalizeString(input.transactionId) ||
+    normalizeString(input.projectName) ||
+    `${normalizeString(input.orderNumber)}:${input.itemIndexInOrder ?? 0}`;
+  const isProductMapped = Boolean(product);
+  const initialStatus = isProductMapped ? "new" : "waiting";
+
+  const orderFields = {
+    etsyOrderId: normalizeString(input.orderNumber),
+    etsyItemId,
+    etsyReceiptId: null,
+    sku: null,
+    companyId,
+    storeId: store._id,
+    productId: product?._id || null,
+    listingId: nullableStringValue(input.listingId),
+    ingestSource: normalizeString(input.source) || "n8n",
+    projectName: nullableStringValue(input.projectName),
+    suffix: nullableStringValue(input.suffix),
+    totalItemsInOrder: input.totalItemsInOrder ?? null,
+    itemIndexInOrder: input.itemIndexInOrder ?? null,
+    isFirstItem: input.isFirstItem ?? true,
+    shop: nullableStringValue(input.shop),
+    option1Name: nullableStringValue(input.option1Name),
+    option1Value: nullableStringValue(input.option1Value),
+    option2Name: nullableStringValue(input.option2Name),
+    option2Value: nullableStringValue(input.option2Value),
+    buyerNote: nullableStringValue(input.buyerNote),
+    pricing: input.pricing || null,
+    rawIngestPayload: input as Record<string, unknown>,
+    customerName,
+    customerEmail: nullableStringValue(input.customer?.email),
+    shippingAddress: {
+      name: customerName,
+      street1: normalizeString(input.customer?.address?.street1),
+      street2: normalizeString(input.customer?.address?.street2),
+      city: normalizeString(input.customer?.address?.city),
+      state: normalizeString(input.customer?.address?.state),
+      zip: normalizeString(input.customer?.address?.zip),
+      country: normalizeString(input.customer?.address?.country),
+    },
+    productTitle,
+    personalization,
+    quantity: input.quantity || 1,
+    price: Number(input.itemPrice || 0),
+    shippingCost: Number(input.pricing?.shipping || 0),
+    coverImageUrl: requiresTemplateFinalization ? null : product?.coverImageUrl || null,
+    interiorPdfUrl: requiresTemplateFinalization
+      ? null
+      : matchedVariant?.interiorPdfUrl || product?.interiorPdfUrl || null,
+    podPackageId: matchedVariant?.podPackageId || product?.podPackageId || null,
+    shippingLevel: store.shippingLevel || "MAIL",
+    shipByDate,
+    orderedAt,
+    matchedVariantId,
+    matchedVariantName,
+    requiresTemplateFinalization,
+    templateAiSuggestions: templateSeedValues,
+    templateFieldValues: templateSeedValues,
+    notes: normalizeString(input.buyerNote),
+    isProductMapped,
+    aiFlags: isProductMapped ? [] : ["Missing Product Mapping"],
+  };
+
+  const existing = await Order.findOne({ etsyItemId, companyId });
+  if (existing) {
+    const previousStatus = existing.etsyStatus;
+    Object.assign(existing, orderFields);
+    existing.etsyStatus = previousStatus;
+    await existing.save();
+
+    return {
+      created: false,
+      updated: true,
+      orderId: existing._id,
+      etsyOrderId: existing.etsyOrderId,
+      etsyItemId: existing.etsyItemId,
+      isProductMapped: existing.isProductMapped,
+    };
+  }
+
+  const order = new Order({
+    ...orderFields,
+    etsyStatus: initialStatus,
+  });
+  await order.save();
+
+  await new OrderEvent({
+    orderId: order._id,
+    companyId,
+    fromStatus: null,
+    toStatus: order.etsyStatus,
+    statusType: "etsy",
+    userId: null,
+    note: `Ingested from ${order.ingestSource || "n8n"}`,
+  }).save();
+
+  return {
+    created: true,
+    updated: false,
+    orderId: order._id,
+    etsyOrderId: order.etsyOrderId,
+    etsyItemId: order.etsyItemId,
+    isProductMapped: order.isProductMapped,
+  };
 };
 
 export const getOrders = async (
